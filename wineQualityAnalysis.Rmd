@@ -1,0 +1,485 @@
+---
+title: "Wine Quality Analysis with Advanced ML Techniques & Visualizations"
+author: "Surya"
+date: "06-Sep-2025"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+start_time <- Sys.time()
+```
+
+# Wine Quality Analysis with Advanced ML Techniques & Visualizations
+Welcome to this comprehensive analysis of wine quality using advanced machine learning techniques and visualizations in R! 🍷
+
+---
+
+## 1. Load Required Libraries
+
+Before we can analyze wine, we need to load the necessary R packages. These packages provide tools for data manipulation (`tidyverse`), machine learning (`caret`, `randomForest`, `e1071`, `nnet`), visualization (`ggplot2`, `corrplot`), and data wrangling (`reshape2`). If any package is missing, it will be installed automatically.
+
+```{r libraries}
+required_libs <- c("tidyverse", "caret", "randomForest", "e1071", "nnet", "corrplot", "RCurl", "reshape2")
+for (lib in required_libs) {
+  if (!require(lib, character.only = TRUE)) {
+    install.packages(lib, repos = "http://cran.us.r-project.org")
+    library(lib, character.only = TRUE)
+  }
+}
+```
+
+---
+
+## 2. Download and Prepare Wine Quality Data
+
+We use two datasets from the UCI Machine Learning Repository: one for red wine and one for white wine. These datasets contain physicochemical properties and quality ratings for thousands of wines. We combine them into a single dataset and add a `wine_type` column to distinguish between red and white.
+
+```{r data-download}
+cat("Downloading wine quality datasets...\n")
+options(timeout = 300)
+
+red_url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-red.csv"
+red_wine_raw <- read.csv(red_url, sep = ";", header = TRUE)
+red_wine_raw$wine_type <- "red"
+
+white_url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-white.csv"
+white_wine_raw <- read.csv(white_url, sep = ";", header = TRUE)
+white_wine_raw$wine_type <- "white"
+
+wine_data <- rbind(red_wine_raw, white_wine_raw)
+cat("Combined dataset size:", nrow(wine_data), "wines\n")
+```
+
+---
+
+## 3. Data Preprocessing and Feature Engineering
+
+To improve model performance and interpretability, we create new features based on domain knowledge and interactions between variables. We also categorize wine quality into "Low", "Medium", and "High" for classification, and remove any incomplete data.
+
+```{r feature-engineering}
+wine_data <- wine_data %>%
+  mutate(
+    quality_category = case_when(
+      quality <= 5 ~ "Low",
+      quality <= 7 ~ "Medium",
+      TRUE ~ "High"
+    ),
+    quality_category = factor(quality_category, levels = c("Low", "Medium", "High")),
+    wine_type = factor(wine_type),
+    acid_ratio = fixed.acidity / volatile.acidity,
+    sugar_alcohol_ratio = residual.sugar / alcohol,
+    sulfur_ratio = free.sulfur.dioxide / total.sulfur.dioxide,
+    total_acidity = fixed.acidity + volatile.acidity + citric.acid,
+    alcohol_sugar_interaction = alcohol * residual.sugar,
+    density_alcohol_ratio = density / alcohol,
+    ph_acidity_balance = pH * total_acidity,
+    preservation_index = total.sulfur.dioxide / density,
+    quality_compounds = sulphates * citric.acid,
+    alcohol_squared = alcohol^2,
+    volatile_acidity_squared = volatile.acidity^2,
+    wine_type_numeric = ifelse(wine_type == "red", 1, 0),
+    red_wine_alcohol = wine_type_numeric * alcohol,
+    white_wine_sugar = (1 - wine_type_numeric) * residual.sugar
+  ) %>%
+  na.omit()
+```
+
+---
+
+## 4. Exploratory Analysis
+
+Let's get a sense of our data: how many wines fall into each quality category, and how many are red vs. white? This helps us understand class balance and potential biases.
+
+```{r exploratory}
+cat("\nQuality distribution:\n")
+print(table(wine_data$quality_category))
+cat("\nWine type distribution:\n") 
+print(table(wine_data$wine_type))
+```
+
+---
+
+## 5. Visualizations
+
+Visualizations help us see patterns and relationships in the data.  
+- **Quality Distribution:** Shows class imbalance.
+- **Correlation Heatmap:** Reveals relationships between chemical properties.
+- **Alcohol Content by Quality:** Explores how alcohol relates to perceived quality.
+
+```{r visualizations, fig.width=7, fig.height=5}
+# Plot 1: Quality Distribution
+p1 <- wine_data %>%
+  ggplot(aes(x = quality_category, fill = quality_category)) +
+  geom_bar(alpha = 0.8) +
+  geom_text(stat = 'count', aes(label = after_stat(count)), vjust = -0.5) +
+  labs(title = "Distribution of Wine Quality Categories",
+       subtitle = "Most wines are mediocre - just like my cooking",
+       x = "Quality Category", 
+       y = "Number of Wines") +
+  scale_fill_manual(values = c("Low" = "#FF6B6B", "Medium" = "#4ECDC4", "High" = "#45B7D1")) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 12))
+print(p1)
+
+# Plot 2: Correlation Heatmap
+cor_data <- wine_data %>%
+  select(fixed.acidity, volatile.acidity, citric.acid, residual.sugar, 
+         chlorides, free.sulfur.dioxide, total.sulfur.dioxide, 
+         density, pH, sulphates, alcohol, quality) %>%
+  cor()
+cor_melted <- reshape2::melt(cor_data)
+names(cor_melted) <- c("Var1", "Var2", "value")
+p2 <- cor_melted %>%
+  ggplot(aes(Var1, Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab",
+                       name="Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        plot.title = element_text(size = 14, face = "bold")) +
+  labs(title = "Wine Chemistry Relationships",
+       subtitle = "More complex than a sommelier's tasting notes",
+       x = "", y = "") +
+  coord_fixed()
+print(p2)
+
+# Plot 3: Alcohol Content by Quality
+p3 <- wine_data %>%
+  ggplot(aes(x = quality_category, y = alcohol, fill = quality_category)) +
+  geom_boxplot(alpha = 0.8, outlier.alpha = 0.5) +
+  geom_jitter(alpha = 0.3, width = 0.2, size = 0.5) +
+  labs(title = "Alcohol Content vs Wine Quality",
+       subtitle = "Higher alcohol = Better wine. I don't make the rules.",
+       x = "Quality Category",
+       y = "Alcohol Content (%)") +
+  scale_fill_manual(values = c("Low" = "#FF6B6B", "Medium" = "#4ECDC4", "High" = "#45B7D1")) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 12))
+print(p3)
+```
+
+---
+
+## 6. Train/Test/Validation Split
+
+To evaluate our models fairly, we split the data into training, validation, and test sets.  
+- **Training:** Used to fit models.
+- **Validation:** Used for model selection and tuning.
+- **Test:** Used for final unbiased evaluation.
+
+```{r split}
+set.seed(42)
+test_index <- createDataPartition(y = wine_data$quality_category, times = 1, p = 0.2, list = FALSE)
+train_set <- wine_data[-test_index,]
+test_set <- wine_data[test_index,]
+
+set.seed(42)
+val_index <- createDataPartition(y = train_set$quality_category, times = 1, p = 0.2, list = FALSE)
+validation_set <- train_set[val_index,]
+train_set_final <- train_set[-val_index,]
+
+cat("Training set size:", nrow(train_set_final), "\n")
+cat("Validation set size:", nrow(validation_set), "\n") 
+cat("Test set size:", nrow(test_set), "\n")
+```
+
+---
+
+## 7. Model Training & Validation
+
+We train several models to predict wine quality:
+- **Baseline:** Always predicts the most common class.
+- **Random Forest:** Ensemble of decision trees.
+- **SVM:** Finds optimal boundaries between classes.
+- **Neural Network:** Captures complex nonlinear relationships.
+- **Enhanced Random Forest:** More trees and features for improved accuracy.
+
+We compare their validation accuracy to select the best approach.
+
+```{r model-training}
+accuracy_func <- function(actual, predicted) {
+  mean(actual == predicted)
+}
+
+feature_cols <- c("fixed.acidity", "volatile.acidity", "citric.acid", "residual.sugar",
+                  "chlorides", "free.sulfur.dioxide", "total.sulfur.dioxide", "density", 
+                  "pH", "sulphates", "alcohol", "wine_type", "acid_ratio", 
+                  "sugar_alcohol_ratio", "sulfur_ratio", "total_acidity",
+                  "alcohol_sugar_interaction", "density_alcohol_ratio", "ph_acidity_balance",
+                  "preservation_index", "quality_compounds", "alcohol_squared",
+                  "volatile_acidity_squared", "red_wine_alcohol", "white_wine_sugar")
+
+results_df <- data.frame(Method = character(), Accuracy = numeric(), stringsAsFactors = FALSE)
+
+# Baseline
+baseline_pred <- rep(names(sort(table(train_set_final$quality_category), decreasing = TRUE))[1], 
+                     nrow(validation_set))
+baseline_accuracy <- accuracy_func(validation_set$quality_category, baseline_pred)
+results_df <- rbind(results_df, data.frame(Method = "Baseline (Most Frequent)", Accuracy = baseline_accuracy))
+cat("Method 1 completed: Baseline\n")
+
+# Random Forest
+set.seed(42)
+rf_model <- randomForest(quality_category ~ ., 
+                         data = train_set_final[, c(feature_cols, "quality_category")],
+                         ntree = 500, mtry = 8, importance = TRUE)
+rf_pred <- predict(rf_model, validation_set)
+rf_accuracy <- accuracy_func(validation_set$quality_category, rf_pred)
+results_df <- rbind(results_df, data.frame(Method = "Random Forest", Accuracy = rf_accuracy))
+cat("Method 2 completed: Random Forest\n")
+
+# SVM
+set.seed(42)
+svm_model <- svm(quality_category ~ ., 
+                 data = train_set_final[, c(feature_cols, "quality_category")],
+                 kernel = "radial", cost = 1, gamma = 0.1, probability = TRUE)
+svm_pred <- predict(svm_model, validation_set)
+svm_accuracy <- accuracy_func(validation_set$quality_category, svm_pred)
+results_df <- rbind(results_df, data.frame(Method = "SVM (RBF Kernel)", Accuracy = svm_accuracy))
+cat("Method 3 completed: SVM\n")
+
+# Neural Network
+set.seed(42)
+numeric_cols <- c("fixed.acidity", "volatile.acidity", "citric.acid", "residual.sugar",
+                  "chlorides", "free.sulfur.dioxide", "total.sulfur.dioxide", "density", 
+                  "pH", "sulphates", "alcohol", "acid_ratio", "sugar_alcohol_ratio", 
+                  "sulfur_ratio", "total_acidity", "alcohol_sugar_interaction",
+                  "density_alcohol_ratio", "ph_acidity_balance", "preservation_index",
+                  "quality_compounds", "alcohol_squared", "volatile_acidity_squared",
+                  "red_wine_alcohol", "white_wine_sugar")
+train_scaled <- train_set_final
+validation_scaled <- validation_set
+for(col in numeric_cols) {
+  col_mean <- mean(train_set_final[[col]])
+  col_sd <- sd(train_set_final[[col]])
+  train_scaled[[col]] <- (train_set_final[[col]] - col_mean) / col_sd
+  validation_scaled[[col]] <- (validation_set[[col]] - col_mean) / col_sd
+}
+nn_model <- nnet(quality_category ~ ., 
+                 data = train_scaled[, c(feature_cols, "quality_category")],
+                 size = 15, decay = 0.1, maxit = 300, trace = FALSE)
+nn_pred <- predict(nn_model, validation_scaled, type = "class")
+nn_accuracy <- accuracy_func(validation_set$quality_category, nn_pred)
+results_df <- rbind(results_df, data.frame(Method = "Neural Network", Accuracy = nn_accuracy))
+cat("Method 4 completed: Neural Network\n")
+
+# Enhanced Random Forest
+set.seed(42)
+tuned_rf <- randomForest(quality_category ~ ., 
+                         data = train_set_final[, c(feature_cols, "quality_category")],
+                         ntree = 1000, mtry = 10, importance = TRUE, nodesize = 2)
+tuned_rf_pred <- predict(tuned_rf, validation_set)
+tuned_rf_accuracy <- accuracy_func(validation_set$quality_category, tuned_rf_pred)
+results_df <- rbind(results_df, data.frame(Method = "Enhanced Random Forest", Accuracy = tuned_rf_accuracy))
+cat("Method 5 completed: Enhanced Random Forest\n")
+```
+
+---
+
+## 8. Weighted Ensemble Model
+
+Ensembles combine predictions from multiple models to improve accuracy and robustness. Here, we weight each model's predictions by its validation accuracy, giving more influence to better-performing models.
+
+```{r ensemble}
+cat("Creating Weighted Ensemble - combining the wisdom of all our models...\n")
+set.seed(42)
+rf_probs <- predict(rf_model, validation_set, type = "prob")
+svm_probs <- attr(predict(svm_model, validation_set, probability = TRUE), "probabilities")
+nn_probs <- predict(nn_model, validation_scaled, type = "raw")
+tuned_rf_probs <- predict(tuned_rf, validation_set, type = "prob")
+model_accuracies <- c(rf_accuracy, svm_accuracy, nn_accuracy, tuned_rf_accuracy)
+ensemble_weights <- model_accuracies / sum(model_accuracies)
+cat("Ensemble weights based on performance:\n")
+cat("Random Forest:", round(ensemble_weights[1], 3), "\n")
+cat("SVM:", round(ensemble_weights[2], 3), "\n")
+cat("Neural Network:", round(ensemble_weights[3], 3), "\n")
+cat("Enhanced RF:", round(ensemble_weights[4], 3), "\n")
+weighted_probs <- ensemble_weights[1] * rf_probs + 
+  ensemble_weights[2] * svm_probs[,c("Low","Medium","High")] + 
+  ensemble_weights[3] * nn_probs + 
+  ensemble_weights[4] * tuned_rf_probs
+ensemble_pred <- factor(colnames(weighted_probs)[apply(weighted_probs, 1, which.max)], 
+                        levels = c("Low", "Medium", "High"))
+ensemble_accuracy <- accuracy_func(validation_set$quality_category, ensemble_pred)
+results_df <- rbind(results_df, data.frame(Method = "Weighted Ensemble", Accuracy = ensemble_accuracy))
+cat("Method 6 completed: Weighted Ensemble (our potential 90%+ superstar!)\n")
+```
+
+---
+
+## 9. Feature Importance Visualization
+
+Which features matter most for predicting wine quality? We visualize the top contributors according to our best-performing model, helping us understand what drives wine ratings.
+
+```{r feature-importance, fig.width=7, fig.height=5}
+best_model_idx <- which.max(results_df$Accuracy[1:6])
+if(results_df$Method[best_model_idx] == "Weighted Ensemble") {
+  importance_df <- data.frame(
+    Feature = names(importance(tuned_rf)[, "MeanDecreaseGini"]),
+    Importance = importance(tuned_rf)[, "MeanDecreaseGini"]
+  ) %>%
+    arrange(desc(Importance)) %>%
+    slice_head(n = 10) %>%
+    mutate(Feature = reorder(Feature, Importance))
+  subtitle_text <- "Ensemble champion reveals the wine secrets (our features are legends!)"
+} else {
+  importance_df <- data.frame(
+    Feature = names(importance(tuned_rf)[, "MeanDecreaseGini"]),
+    Importance = importance(tuned_rf)[, "MeanDecreaseGini"]
+  ) %>%
+    arrange(desc(Importance)) %>%
+    slice_head(n = 10) %>%
+    mutate(Feature = reorder(Feature, Importance))
+  subtitle_text <- "Enhanced Random Forest picks its favorites (engineered features FTW!)"
+}
+p4 <- importance_df %>%
+  ggplot(aes(x = Feature, y = Importance, fill = Importance)) +
+  geom_col(alpha = 0.8) +
+  coord_flip() +
+  scale_fill_gradient(low = "#E8F4F8", high = "#2E86AB") +
+  labs(title = "Feature Importance: What Actually Predicts Wine Quality",
+       subtitle = subtitle_text,
+       x = "Features (Original + Our Engineered Ones)",
+       y = "Importance Score") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 12))
+print(p4)
+```
+
+---
+
+## 10. Model Performance Comparison
+
+How do our models stack up? This section compares validation accuracy across all approaches, highlighting the strengths of ensemble learning.
+
+```{r performance-comparison, fig.width=7, fig.height=5}
+performance_df <- results_df[1:6, ]
+p5 <- performance_df %>%
+  ggplot(aes(x = reorder(Method, Accuracy), y = Accuracy, fill = Accuracy)) +
+  geom_col(alpha = 0.8) +
+  geom_text(aes(label = round(Accuracy, 3)), hjust = -0.1) +
+  coord_flip() +
+  scale_fill_gradient(low = "#FFE5E5", high = "#2E8B57") +
+  labs(title = "Model Performance Championship",
+       subtitle = "Can our Ensemble break the 90% barrier? 🏆",
+       x = "Machine Learning Models",
+       y = "Validation Accuracy") +
+  ylim(0, 1) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 12))
+print(p5)
+```
+
+---
+
+## 11. Final Test Evaluation
+
+We apply our best model to the held-out test set for an unbiased estimate of real-world performance. This is the ultimate test of our wine-judging AI!
+
+```{r final-test}
+best_model_idx <- which.max(results_df$Accuracy)
+best_method <- results_df$Method[best_model_idx]
+cat("\nBest validation method:", best_method, "\n")
+cat("Validation accuracy:", round(results_df$Accuracy[best_model_idx], 4), "\n")
+
+if(best_method == "Weighted Ensemble") {
+  test_scaled <- test_set
+  for(col in numeric_cols) {
+    col_mean <- mean(train_set_final[[col]])
+    col_sd <- sd(train_set_final[[col]])
+    test_scaled[[col]] <- (test_set[[col]] - col_mean) / col_sd
+  }
+  rf_test_probs <- predict(rf_model, test_set, type = "prob")
+  svm_test_probs <- attr(predict(svm_model, test_set, probability = TRUE), "probabilities")
+  nn_test_probs <- predict(nn_model, test_scaled, type = "raw")
+  tuned_rf_test_probs <- predict(tuned_rf, test_set, type = "prob")
+  weighted_test_probs <- ensemble_weights[1] * rf_test_probs + 
+    ensemble_weights[2] * svm_test_probs[,c("Low","Medium","High")] + 
+    ensemble_weights[3] * nn_test_probs + 
+    ensemble_weights[4] * tuned_rf_test_probs
+  final_pred <- factor(colnames(weighted_test_probs)[apply(weighted_test_probs, 1, which.max)], 
+                       levels = c("Low", "Medium", "High"))
+} else if(grepl("Enhanced Random Forest", best_method)) {
+  final_pred <- predict(tuned_rf, test_set)
+} else if(best_method == "Random Forest") {
+  final_pred <- predict(rf_model, test_set)
+} else if(best_method == "SVM (RBF Kernel)") {
+  final_pred <- predict(svm_model, test_set)
+} else {
+  test_scaled <- test_set
+  for(col in numeric_cols) {
+    col_mean <- mean(train_set_final[[col]])
+    col_sd <- sd(train_set_final[[col]])
+    test_scaled[[col]] <- (test_set[[col]] - col_mean) / col_sd
+  }
+  final_pred <- predict(nn_model, test_scaled, type = "class")
+}
+final_accuracy <- accuracy_func(test_set$quality_category, final_pred)
+results_df <- rbind(results_df, data.frame(Method = "Final Test Accuracy", Accuracy = final_accuracy))
+cat("\n=== RESULTS SUMMARY ===\n")
+cat("Drumroll please... 🥁\n")
+print(results_df)
+if(final_accuracy >= 0.90) {
+  cat("\n🎉 MISSION ACCOMPLISHED! We broke the 90% barrier! 🎉\n")
+  cat("Our ensemble wine-judging AI is now better than most humans! 🍷\n")
+} else {
+  cat(sprintf("\n📈 Final accuracy: %.1f%% - Getting close to sommelier level!\n", final_accuracy * 100))
+  cat("Still better than my wine-picking skills at the grocery store! 🛒\n")
+}
+```
+
+---
+
+## 12. Feature Importance & Confusion Matrix
+
+To further interpret our model, we show the top features and a confusion matrix, plus precision, recall, and F1-score for each class. This gives a detailed view of strengths and weaknesses.
+
+```{r importance-confusion}
+cat("\nTop 10 Most Important Features:\n")
+cat("AKA: What makes wine worth the price tag\n")
+importance_scores <- importance(tuned_rf)[, "MeanDecreaseGini"]
+top_features <- sort(importance_scores, decreasing = TRUE)[1:10]
+print(round(top_features, 2))
+
+cat("\nFinal Test Set Confusion Matrix:\n")
+cat("Where our ensemble gets confused (hopefully rarely!)\n")
+conf_matrix <- table(Predicted = final_pred, Actual = test_set$quality_category)
+print(conf_matrix)
+
+precision <- diag(conf_matrix) / rowSums(conf_matrix)
+recall <- diag(conf_matrix) / colSums(conf_matrix)
+f1 <- 2 * (precision * recall) / (precision + recall)
+
+cat("\nPer-class Performance:\n")
+cat("More detailed than a sommelier's tasting notes (and hopefully more accurate!)\n")
+performance_summary <- data.frame(
+  Class = names(precision),
+  Precision = round(precision, 3),
+  Recall = round(recall, 3),
+  F1_Score = round(f1, 3)
+)
+print(performance_summary)
+```
+
+---
+
+## 13. Execution Time Tracking
+
+Finally, we report how long the analysis took. Good wine takes time, but good code should be efficient!
+
+```{r timing}
+end_time <- Sys.time()
+total_time <- as.numeric(difftime(end_time, start_time, units = "mins"))
+cat("\nTotal execution time:", round(total_time, 2), "minutes\n")
+cat("Still faster than waiting for your Uber after wine tasting! 🍷\n")
+cat("\n🎉 Analysis complete! Our weighted ensemble can now judge wine better than that friend who only drinks box wine but claims to be an expert! 🎉\n")
+cat("With our ensemble approach combining multiple models, we're targeting true sommelier-level
